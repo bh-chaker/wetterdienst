@@ -3,7 +3,7 @@
 # Distributed under the MIT License. See LICENSE for more info.
 import logging
 import operator
-from abc import abstractmethod
+from abc import abstractmethod, ABCMeta
 from enum import Enum
 from typing import Dict, Generator, List, Tuple, Union
 
@@ -24,7 +24,7 @@ from wetterdienst.util.logging import TqdmToLogger
 log = logging.getLogger(__name__)
 
 
-class ScalarValuesCore:
+class ScalarValuesCore(metaclass=ABCMeta):
     """ Core for sources of point data where data is related to a station """
 
     # Fields for type coercion, needed for separation from fields with actual data
@@ -431,24 +431,29 @@ class ScalarValuesCore:
                 if parameter_df.empty:
                     continue
 
-                # Merge on full date range if values are found to ensure result
-                # even if no actual values exist
                 self._coerce_date_fields(parameter_df)
 
+                # TODO: we are coercing values here for conversion of units
+                #  however we later again coerce when concatenating DataFrames
                 parameter_df = self._coerce_parameter_types(parameter_df)
 
                 if self.stations.stations.si_units:
                     parameter_df = self.convert_values_to_si(parameter_df, dataset)
 
                 if self.stations.stations.tidy:
-                    parameter_df = self.tidy_up_df(parameter_df, dataset)
+                    if not self.stations.stations._has_tidy_data:
+                        parameter_df = self.tidy_up_df(parameter_df, dataset)
 
                     if parameter != dataset:
                         parameter_df = parameter_df[
                             parameter_df[Columns.PARAMETER.value]
                             == parameter.value.lower()
                         ]
+                elif self.stations.stations._has_tidy_data:
+                    parameter_df = self.tabulate_df(parameter_df)
 
+                # Merge on full date range if values are found to ensure result
+                # even if no actual values exist
                 parameter_df = self._build_complete_df(
                     parameter_df, station_id, parameter, dataset
                 )
@@ -530,15 +535,50 @@ class ScalarValuesCore:
 
         return df
 
-    @abstractmethod
     def _tidy_up_df(self, df: pd.DataFrame, dataset) -> pd.DataFrame:
         """
-        Abstract method to be implemented by services to tidy a DataFrame
+        Abstract method to be implemented by services to tidy a DataFrame if tidy is not provided
+        tidy by default
 
         :param df:
         :return:
         """
-        pass
+        if not self.stations.stations._has_tidy_data:
+            raise NotImplementedError("implement _tidy_up_df method to tidy data")
+
+    @staticmethod
+    def tabulate_df(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Method to tabulate a dataframe with each row having one timestamp and
+        all parameter values and corresponding quality levels.
+
+        Example:
+
+        date         parameter                  value   quality
+        1971-01-01   precipitation_height       0       0
+        1971-01-01   temperature_air_mean_200   10      0
+
+        becomes
+
+        date         precipitation_height   qn_precipitation_height     temperature_air_mean_200    ...
+        1971-01-01   0                      0                           10                          ...
+
+        :param df: pandas.DataFrame with tidy data
+        :returns pandas.DataFrame with tabulated data e.g. pairwise columns of values
+        and quality flags
+        """
+        df_tabulated = pd.DataFrame({Columns.DATE.value: df[Columns.DATE.value]})
+
+        for parameter, parameter_df in df.groupby(by=[df[Columns.PARAMETER.value]]):
+            # Build quality columm name
+            parameter_quality = f"{Columns.QUALITY_PREFIX.value}_{parameter}"
+
+            # Add values
+            df_tabulated[parameter] = parameter_df[Columns.VALUE.value]
+            # Add quality levels
+            df_tabulated[parameter_quality] = parameter_df[Columns.QUALITY.value]
+
+        return df_tabulated
 
     def _coerce_date_fields(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -735,9 +775,16 @@ class ScalarValuesCore:
 
         :return:
         """
+        # hcnm = {
+        #     parameter.value: parameter.name.lower()
+        #     for parameter in self.stations.stations._parameter_base
+        # }
+
         hcnm = {
             parameter.value: parameter.name.lower()
-            for parameter in self.stations.stations._parameter_base
+            for parameter in self.stations.stations._parameter_base[
+                self.stations.stations.resolution.name
+            ]
         }
 
         return hcnm

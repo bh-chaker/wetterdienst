@@ -387,6 +387,7 @@ class DwdObservationRequest(ScalarRequestCore):
     _period_base = DwdObservationPeriod
     _data_range = DataRange.FIXED
     _has_datasets = True
+    _has_tidy_data = False
     _unique_dataset = False
     _dataset_base = DwdObservationDataset
     _dataset_tree = DwdObservationDatasetTree
