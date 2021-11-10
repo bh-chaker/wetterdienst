@@ -215,6 +215,8 @@ class ScalarValuesCore:
                 factor = REGISTRY(str(origin_unit)).to(str(si_unit)).magnitude
 
                 conversion_factors[parameter_value] = (operator.mul, factor)
+            elif si_unit == SIUnit.DIMENSIONLESS.value:
+                conversion_factors[parameter_value] = (None, None)
             else:
                 # For multiplicative units we need to use 1 as quantity to apply the
                 # appropriate factor
